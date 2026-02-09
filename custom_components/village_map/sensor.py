@@ -23,7 +23,7 @@ async def async_setup_entry(
         if not coordinator.data: return
 
         # 1. Сенсор модерации
-        mod_uid = f"{entry.entry_id}_moderation"
+        mod_uid = f"vmap_moderation_queue" # Стабильный ID без привязки к entry_id
         if mod_uid not in added_unique_ids:
             new_entities.append(VillageMapModerationSensor(coordinator, mod_uid))
             added_unique_ids.add(mod_uid)
@@ -31,7 +31,7 @@ async def async_setup_entry(
         # 2. Сенсоры категорий (групповые)
         if "categories" in coordinator.data:
             for cat in coordinator.data["categories"]:
-                cat_uid = f"{entry.entry_id}_cat_{cat['slug']}"
+                cat_uid = f"vmap_cat_{cat['slug']}"
                 if cat_uid not in added_unique_ids:
                     new_entities.append(VillageMapCategorySensor(coordinator, cat, cat_uid))
                     added_unique_ids.add(cat_uid)
@@ -45,7 +45,8 @@ async def async_setup_entry(
                 for key, value in attrs.items():
                     if key in ["ha_expose", "editable_for_users"]: continue
                     
-                    obj_uid = f"{entry.entry_id}_obj_{obj['id']}_{key}"
+                    # Стабильный ID: префикс + ID объекта + ключ атрибута
+                    obj_uid = f"vmap_obj_{obj['id']}_{key}"
                     if obj_uid not in added_unique_ids:
                         new_entities.append(VillageMapObjectAttributeSensor(coordinator, obj, key, obj_uid))
                         added_unique_ids.add(obj_uid)
@@ -53,13 +54,10 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    # Слушаем обновления данных от координатора
     coordinator.async_add_listener(async_update_entities)
-    # Первый запуск при загрузке
     await async_update_entities()
 
 class VillageMapModerationSensor(CoordinatorEntity, SensorEntity):
-    """Сенсор очереди модерации."""
     def __init__(self, coordinator, unique_id):
         super().__init__(coordinator)
         self._attr_name = "Village Map: Модерация"
@@ -70,13 +68,7 @@ class VillageMapModerationSensor(CoordinatorEntity, SensorEntity):
     def native_value(self):
         return len([obj for obj in self.coordinator.data.get("objects", []) if obj.get("pending_delete")])
 
-    @property
-    def extra_state_attributes(self):
-        pending = [obj for obj in self.coordinator.data.get("objects", []) if obj.get("pending_delete")]
-        return {"object_list": pending}
-
 class VillageMapCategorySensor(CoordinatorEntity, SensorEntity):
-    """Групповой сенсор категории."""
     def __init__(self, coordinator, category, unique_id):
         super().__init__(coordinator)
         self._category = category
@@ -90,7 +82,6 @@ class VillageMapCategorySensor(CoordinatorEntity, SensorEntity):
         return len([obj for obj in self.coordinator.data.get("objects", []) if obj.get("category_slug") == cat_slug])
 
 class VillageMapObjectAttributeSensor(CoordinatorEntity, SensorEntity):
-    """Сенсор конкретного атрибута объекта."""
     def __init__(self, coordinator, obj, attr_key, unique_id):
         super().__init__(coordinator)
         self.obj_id = obj.get("id")
@@ -101,10 +92,8 @@ class VillageMapObjectAttributeSensor(CoordinatorEntity, SensorEntity):
         friendly_name = ui_config.get(attr_key, attr_key.replace('_', ' ').capitalize())
         
         title = obj.get("title") or f"ID {self.obj_id}"
-        # Имя сенсора в интерфейсе
         self._attr_name = friendly_name
         
-        # Данные устройства (группировка всех сенсоров одной метки в одно устройство)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"vmap_obj_{self.obj_id}")},
             name=f"Карта: {title}",
@@ -118,15 +107,16 @@ class VillageMapObjectAttributeSensor(CoordinatorEntity, SensorEntity):
             return None
         for obj in self.coordinator.data["objects"]:
             if obj.get("id") == self.obj_id:
-                return (obj.get("attributes") or {}).get(self.attr_key)
+                val = (obj.get("attributes") or {}).get(self.attr_key)
+                if val is None or val == "": return 0.0
+                return val
         return None
 
     @property
     def native_unit_of_measurement(self):
-        # Авто-определение единиц измерения для красоты графиков
-        val = self.native_value
-        if isinstance(val, str):
-            if " В" in val or " V" in val: return "V"
-            if "°C" in val: return "°C"
-            if " %" in val: return "%"
+        # Если ключ содержит temp, вольт или %, ставим красивые единицы
+        key = self.attr_key.lower()
+        if "temp" in key or "град" in key: return "°C"
+        if "faza" in key or "phase" in key or "volt" in key: return "V"
+        if "perc" in key or "%" in key: return "%"
         return None
