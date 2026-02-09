@@ -1,0 +1,82 @@
+update_object:
+  name: Update Map Object
+  description: Updates the description and attributes of a map object identified by its title.
+  fields:
+    title:
+      name: Title
+      description: The exact title of the map object.
+      required: true
+      selector:
+        text:
+    ha_data:
+      name: HA Data
+      description: General description field.
+      selector:
+        text:
+          multiline: true
+    attributes:
+      name: Attributes
+      description: JSON dictionary of custom fields to update.
+      selector:
+        object:
+    replace_attributes:
+      name: Replace all attributes
+      description: If true, will replace all existing attributes instead of merging.
+      default: false
+      selector:
+        boolean:
+
+sync_attribute:
+  name: Sync Attribute from Sensor
+  description: Syncs a single attribute of a map object with a value from a Home Assistant sensor.
+  fields:
+    title:
+      name: Map Object Title
+      description: Title of the object on the map (e.g. 1325).
+      required: true
+      selector:
+        text:
+    attribute_key:
+      name: Map Attribute Key
+      description: Technical key of the attribute (e.g. phase_a).
+      required: true
+      selector:
+        text:
+    source_entity:
+      name: Source Entity
+      description: The HA entity to get the value from.
+      required: true
+      selector:
+        entity:
+
+confirm_delete:
+  name: Confirm Deletion
+  description: Permanently moves a pending object to trash.
+  fields:
+    object_id:
+      name: Object ID
+      description: The ID of the object to delete.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 999999
+
+restore_object:
+  name: Restore Object
+  description: Cancels deletion request or restores from trash.
+  fields:
+    object_id:
+      name: Object ID
+      description: The ID of the object to restore.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 999999
+
+confirm_all_deletions:
+  name: Confirm All Deletions
+
+restore_all_objects:
+  name: Restore All Objects

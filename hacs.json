@@ -1,0 +1,6 @@
+{
+  "name": "Village Map Integration",
+  "render_readme": true,
+  "domains": ["village_map"],
+  "homeassistant": "2023.1.0"
+}

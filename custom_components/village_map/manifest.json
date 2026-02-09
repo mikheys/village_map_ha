@@ -1,0 +1,10 @@
+{
+  "domain": "village_map",
+  "name": "Village Map Integration",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/mikheys/village_map",
+  "iot_class": "local_polling",
+  "version": "1.0.0",
+  "requirements": []
+}
