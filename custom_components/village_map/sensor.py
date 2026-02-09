@@ -1,3 +1,5 @@
+import re
+import logging
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -7,15 +9,15 @@ from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the Village Map sensors with stable IDs."""
+    """Set up the Village Map sensors."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    
-    # Список уже добавленных в текущем сеансе уникальных ID
     added_entities = set()
 
     async def async_update_entities():
@@ -35,14 +37,13 @@ async def async_setup_entry(
                 new_to_add.append(VillageMapCategorySensor(coordinator, cat, c_uid))
                 added_entities.add(c_uid)
 
-        # 3. Атрибуты объектов (Напряжения, температуры и т.д.)
+        # 3. Атрибуты объектов
         for obj in coordinator.data.get("objects", []):
             obj_id = obj.get("id")
             attrs = obj.get("attributes") or {}
             for key in attrs:
                 if key in ["ha_expose", "editable_for_users"]: continue
                 
-                # ВЕЧНЫЙ ID: не зависит от сессии или переустановки
                 o_uid = f"{DOMAIN}_obj_{obj_id}_{key}"
                 if o_uid not in added_entities:
                     new_to_add.append(VillageMapObjectAttributeSensor(coordinator, obj, key, o_uid))
@@ -85,7 +86,6 @@ class VillageMapObjectAttributeSensor(CoordinatorEntity, SensorEntity):
         self.attr_key = attr_key
         self._attr_unique_id = unique_id
         
-        # Настройка устройства (группировка)
         title = obj.get("title") or f"ID {self.obj_id}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"vmap_obj_{self.obj_id}")},
@@ -96,7 +96,6 @@ class VillageMapObjectAttributeSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def name(self):
-        # Динамически берем имя из ui_config карты
         for obj in self.coordinator.data.get("objects", []):
             if obj.get("id") == self.obj_id:
                 ui_config = obj.get("ui_config") or {}
@@ -108,8 +107,29 @@ class VillageMapObjectAttributeSensor(CoordinatorEntity, SensorEntity):
         if not self.coordinator.data or "objects" not in self.coordinator.data: return None
         for obj in self.coordinator.data["objects"]:
             if obj.get("id") == self.obj_id:
-                return (obj.get("attributes") or {}).get(self.attr_key)
+                val = (obj.get("attributes") or {}).get(self.attr_key)
+                if val is None or val == "": return None
+                
+                # ЕСЛИ ЗАДАНЫ ЕДИНИЦЫ ИЗМЕРЕНИЯ - HA ТРЕБУЕТ ЧИСЛО
+                # Вытаскиваем число из строки (например "-15.3°C (21:45)" -> -15.3)
+                if self.native_unit_of_measurement and isinstance(val, str):
+                    try:
+                        # Ищем первое число (с учетом минуса и точки/запятой)
+                        match = re.search(r"([-+]?\d*[\.,]?\d+)", val)
+                        if match:
+                            return float(match.group(1).replace(',', '.'))
+                    except:
+                        pass
+                return val
         return None
+
+    @property
+    def extra_state_attributes(self):
+        """Сохраняем исходную строку в атрибуты на всякий случай."""
+        for obj in self.coordinator.data.get("objects", []):
+            if obj.get("id") == self.obj_id:
+                return {"raw_value": (obj.get("attributes") or {}).get(self.attr_key)}
+        return {}
 
     @property
     def native_unit_of_measurement(self):
