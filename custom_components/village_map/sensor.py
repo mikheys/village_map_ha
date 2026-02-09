@@ -12,47 +12,44 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the Village Map sensors."""
+    """Set up the Village Map sensors with stable IDs."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     
-    # Храним ID сущностей, которые МЫ УЖЕ СОЗДАЛИ в этом сеансе работы HA
-    added_unique_ids = set()
+    # Список уже добавленных в текущем сеансе уникальных ID
+    added_entities = set()
 
     async def async_update_entities():
-        new_entities = []
         if not coordinator.data: return
+        new_to_add = []
 
-        # 1. Сенсор модерации
-        mod_uid = f"vmap_moderation_queue" # Стабильный ID без привязки к entry_id
-        if mod_uid not in added_unique_ids:
-            new_entities.append(VillageMapModerationSensor(coordinator, mod_uid))
-            added_unique_ids.add(mod_uid)
+        # 1. Очередь модерации
+        m_uid = f"{DOMAIN}_moderation_queue_stable"
+        if m_uid not in added_entities:
+            new_to_add.append(VillageMapModerationSensor(coordinator, m_uid))
+            added_entities.add(m_uid)
 
-        # 2. Сенсоры категорий (групповые)
-        if "categories" in coordinator.data:
-            for cat in coordinator.data["categories"]:
-                cat_uid = f"vmap_cat_{cat['slug']}"
-                if cat_uid not in added_unique_ids:
-                    new_entities.append(VillageMapCategorySensor(coordinator, cat, cat_uid))
-                    added_unique_ids.add(cat_uid)
+        # 2. Категории
+        for cat in coordinator.data.get("categories", []):
+            c_uid = f"{DOMAIN}_cat_{cat['slug']}"
+            if c_uid not in added_entities:
+                new_to_add.append(VillageMapCategorySensor(coordinator, cat, c_uid))
+                added_entities.add(c_uid)
 
-        # 3. Индивидуальные сенсоры для атрибутов объектов
-        if "objects" in coordinator.data:
-            for obj in coordinator.data["objects"]:
-                attrs = obj.get("attributes") or {}
+        # 3. Атрибуты объектов (Напряжения, температуры и т.д.)
+        for obj in coordinator.data.get("objects", []):
+            obj_id = obj.get("id")
+            attrs = obj.get("attributes") or {}
+            for key in attrs:
+                if key in ["ha_expose", "editable_for_users"]: continue
                 
-                # Создаем сенсоры для всех атрибутов (кроме системных)
-                for key, value in attrs.items():
-                    if key in ["ha_expose", "editable_for_users"]: continue
-                    
-                    # Стабильный ID: префикс + ID объекта + ключ атрибута
-                    obj_uid = f"vmap_obj_{obj['id']}_{key}"
-                    if obj_uid not in added_unique_ids:
-                        new_entities.append(VillageMapObjectAttributeSensor(coordinator, obj, key, obj_uid))
-                        added_unique_ids.add(obj_uid)
-        
-        if new_entities:
-            async_add_entities(new_entities)
+                # ВЕЧНЫЙ ID: не зависит от сессии или переустановки
+                o_uid = f"{DOMAIN}_obj_{obj_id}_{key}"
+                if o_uid not in added_entities:
+                    new_to_add.append(VillageMapObjectAttributeSensor(coordinator, obj, key, o_uid))
+                    added_entities.add(o_uid)
+
+        if new_to_add:
+            async_add_entities(new_to_add)
 
     coordinator.async_add_listener(async_update_entities)
     await async_update_entities()
@@ -88,12 +85,8 @@ class VillageMapObjectAttributeSensor(CoordinatorEntity, SensorEntity):
         self.attr_key = attr_key
         self._attr_unique_id = unique_id
         
-        ui_config = obj.get("ui_config") or {}
-        friendly_name = ui_config.get(attr_key, attr_key.replace('_', ' ').capitalize())
-        
+        # Настройка устройства (группировка)
         title = obj.get("title") or f"ID {self.obj_id}"
-        self._attr_name = friendly_name
-        
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"vmap_obj_{self.obj_id}")},
             name=f"Карта: {title}",
@@ -102,19 +95,24 @@ class VillageMapObjectAttributeSensor(CoordinatorEntity, SensorEntity):
         )
 
     @property
+    def name(self):
+        # Динамически берем имя из ui_config карты
+        for obj in self.coordinator.data.get("objects", []):
+            if obj.get("id") == self.obj_id:
+                ui_config = obj.get("ui_config") or {}
+                return ui_config.get(self.attr_key, self.attr_key.replace('_', ' ').capitalize())
+        return self.attr_key
+
+    @property
     def native_value(self):
-        if not self.coordinator.data or "objects" not in self.coordinator.data:
-            return None
+        if not self.coordinator.data or "objects" not in self.coordinator.data: return None
         for obj in self.coordinator.data["objects"]:
             if obj.get("id") == self.obj_id:
-                val = (obj.get("attributes") or {}).get(self.attr_key)
-                if val is None or val == "": return 0.0
-                return val
+                return (obj.get("attributes") or {}).get(self.attr_key)
         return None
 
     @property
     def native_unit_of_measurement(self):
-        # Если ключ содержит temp, вольт или %, ставим красивые единицы
         key = self.attr_key.lower()
         if "temp" in key or "град" in key: return "°C"
         if "faza" in key or "phase" in key or "volt" in key: return "V"
